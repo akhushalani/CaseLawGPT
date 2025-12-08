@@ -18,6 +18,7 @@ import sys
 import time
 from pathlib import Path
 from datetime import datetime
+from typing import Optional
 
 import requests
 
@@ -36,11 +37,16 @@ BASE_URL = "https://www.courtlistener.com/api/rest/v4"
 
 SCOTUS_COURT = "scotus"
 PAGE_SIZE = 100
+DEFAULT_CASE_DELAY = 0.3
+DEFAULT_PAGE_DELAY = 1.0
 
 HEADERS = {
     "Authorization": f"Token {CL_TOKEN}",
     "User-Agent": "CaseLawGPT-Research/1.0",
 }
+
+SESSION = requests.Session()
+SESSION.headers.update(HEADERS)
 
 
 # =============================================================================
@@ -86,7 +92,7 @@ def fetch_count_from_url(url: str) -> int:
     """Follow CourtListener count link to get numeric total."""
     response = None
     try:
-        response = requests.get(url, headers=HEADERS, timeout=30)
+        response = SESSION.get(url, timeout=30)
         response.raise_for_status()
         data = response.json()
         nested_count = data.get("count", 0)
@@ -114,10 +120,9 @@ def get_opinion_count(start_date: str) -> int:
     try:
         params = build_opinion_query_params(start_date, page_size=1)
         params["count"] = "on"
-        response = requests.get(
+        response = SESSION.get(
             f"{BASE_URL}/opinions/",
             params=params,
-            headers=HEADERS,
             timeout=30,
         )
         response.raise_for_status()
@@ -144,19 +149,33 @@ def get_opinion_count(start_date: str) -> int:
         return 0
 
 
-def iter_scotus_opinions(start_date: str, page_size: int = PAGE_SIZE):
-    """Iterate over SCOTUS opinions on/after start_date."""
+def iter_scotus_opinions(
+    start_date: str,
+    page_size: int = PAGE_SIZE,
+    page_delay: float = DEFAULT_PAGE_DELAY,
+    max_retries: int = 5,
+):
+    """Iterate over SCOTUS opinions on/after start_date with retry/backoff."""
     next_url = f"{BASE_URL}/opinions/"
     params = build_opinion_query_params(start_date, page_size)
     while next_url:
-        try:
-            response = requests.get(
-                next_url, params=params, headers=HEADERS, timeout=30
-            )
-            response.raise_for_status()
-            data = response.json()
-        except Exception as e:
-            print(f"  Error fetching opinions page: {e}")
+        data = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                response = SESSION.get(next_url, params=params, timeout=45)
+                response.raise_for_status()
+                data = response.json()
+                break
+            except Exception as e:
+                if attempt >= max_retries:
+                    print(f"  Error fetching opinions page after {max_retries} attempts: {e}")
+                    return
+                delay = min(5 * attempt, 15)
+                print(f"  Error fetching opinions page (attempt {attempt}/{max_retries}): {e}. Retrying in {delay}s...")
+                time.sleep(delay)
+                continue
+
+        if not data:
             return
 
         for opinion in data.get("results", []):
@@ -164,13 +183,14 @@ def iter_scotus_opinions(start_date: str, page_size: int = PAGE_SIZE):
 
         next_url = data.get("next")
         params = None
-        time.sleep(1)
+        if next_url and page_delay > 0:
+            time.sleep(page_delay)
 
 
 def get_cluster_details(cluster_url: str) -> dict:
     """Fetch cluster (case) details."""
     try:
-        response = requests.get(cluster_url, headers=HEADERS, timeout=30)
+        response = SESSION.get(cluster_url, timeout=30)
         response.raise_for_status()
         return response.json()
     except Exception as e:
@@ -181,7 +201,7 @@ def get_cluster_details(cluster_url: str) -> dict:
 def get_docket_details(docket_url: str) -> dict:
     """Fetch docket details."""
     try:
-        response = requests.get(docket_url, headers=HEADERS, timeout=30)
+        response = SESSION.get(docket_url, timeout=30)
         response.raise_for_status()
         return response.json()
     except Exception as e:
@@ -198,6 +218,9 @@ def download_cases(
     n_cases: int | None = None,
     output_dir: Path = RAW_DATA_DIR,
     auto_confirm: bool = False,
+    page_size: int = PAGE_SIZE,
+    case_delay: float = DEFAULT_CASE_DELAY,
+    page_delay: float = DEFAULT_PAGE_DELAY,
 ) -> int:
     """
     Download SCOTUS cases from CourtListener API.
@@ -207,6 +230,9 @@ def download_cases(
         n_cases: Optional cap on number of cases to download. Defaults to all.
         output_dir: Directory to save case JSON files.
         auto_confirm: Skip the confirmation prompt when True.
+        page_size: API page size for opinions (max allowed by API is 100).
+        case_delay: Sleep between cases (seconds).
+        page_delay: Sleep between pages (seconds).
         
     Returns:
         Number of cases successfully downloaded.
@@ -255,7 +281,7 @@ def download_cases(
     else:
         print("Auto-confirm enabled; proceeding without prompt.")
 
-    for opinion in iter_scotus_opinions(start_date, page_size=PAGE_SIZE):
+    for opinion in iter_scotus_opinions(start_date, page_size=page_size, page_delay=page_delay):
         if saved >= target_total:
             break
         
@@ -324,7 +350,8 @@ def download_cases(
         saved += 1
         print(f"  [{saved}] {case_data['name'][:60]}")
         
-        time.sleep(0.3)  # Rate limiting
+        if case_delay > 0:
+            time.sleep(case_delay)  # Rate limiting
 
     print(f"\nDone! Downloaded {saved} cases to {output_dir}")
     return saved
@@ -361,6 +388,24 @@ if __name__ == "__main__":
         action="store_true",
         help="Skip confirmation prompt",
     )
+    parser.add_argument(
+        "--page-size",
+        type=int,
+        default=PAGE_SIZE,
+        help="API page size (max 100)",
+    )
+    parser.add_argument(
+        "--case-delay",
+        type=float,
+        default=DEFAULT_CASE_DELAY,
+        help="Delay between cases in seconds (set 0 for fastest)",
+    )
+    parser.add_argument(
+        "--page-delay",
+        type=float,
+        default=DEFAULT_PAGE_DELAY,
+        help="Delay between pages in seconds (set 0 for fastest)",
+    )
     
     args = parser.parse_args()
     download_cases(
@@ -368,4 +413,7 @@ if __name__ == "__main__":
         n_cases=args.n_cases,
         output_dir=args.output_dir,
         auto_confirm=args.yes,
+        page_size=args.page_size,
+        case_delay=args.case_delay,
+        page_delay=args.page_delay,
     )
