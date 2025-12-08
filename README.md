@@ -102,6 +102,39 @@ For GCP deployment:
 streamlit run app.py --server.port 8501 --server.address 0.0.0.0
 ```
 
+## Docker
+
+### Build image
+```bash
+docker build -t caselawgpt .
+```
+
+### Run app (expects Ollama reachable from host)
+```bash
+docker run --rm -p 8501:8501 \
+  -v "$(pwd)/data:/app/data" \
+  -e OLLAMA_URL=http://host.docker.internal:11434 \
+  caselawgpt
+```
+
+### Run data/pipeline commands inside the container
+```bash
+# Download SCOTUS cases
+docker run --rm -it \
+  -v "$(pwd)/data:/app/data" \
+  -e CL_TOKEN=your-token \
+  caselawgpt python scripts/download_courtlistener.py --start-date 2020-01-01
+
+# Ingest and build vector store
+docker run --rm -it -v "$(pwd)/data:/app/data" caselawgpt python -m src.ingestion
+docker run --rm -it -v "$(pwd)/data:/app/data" caselawgpt python -m src.preprocessing
+docker run --rm -it -v "$(pwd)/data:/app/data" caselawgpt python -m src.vectorstore --build
+```
+
+Notes:
+- Mount `$(pwd)/data` to persist the SQLite DB and FAISS index across runs.
+- Ensure an Ollama server is running and reachable at `OLLAMA_URL` (default in the container is `http://host.docker.internal:11434`).
+
 ## Configuration
 
 Key settings in `src/config.py`:
