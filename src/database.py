@@ -1,14 +1,29 @@
-"""Lightweight SQLite schema helpers for CaseLawGPT."""
+"""
+Database utilities for CaseLawGPT.
+
+Provides SQLite schema management and CRUD operations for cases,
+opinions, and text chunks.
+"""
 from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from typing import Iterable, Tuple
+from typing import Iterable, Tuple, Optional
 
-from config import DB_PATH
+from src.config import DB_PATH
 
 
-def get_connection(db_path: str | Path = DB_PATH) -> sqlite3.Connection:
+def get_connection(db_path: Optional[str | Path] = None) -> sqlite3.Connection:
+    """
+    Create a database connection with foreign key support.
+    
+    Args:
+        db_path: Path to SQLite database. Defaults to config.DB_PATH.
+        
+    Returns:
+        SQLite connection object.
+    """
+    db_path = db_path or DB_PATH
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA foreign_keys = ON;")
@@ -16,7 +31,14 @@ def get_connection(db_path: str | Path = DB_PATH) -> sqlite3.Connection:
 
 
 def init_db(conn: sqlite3.Connection) -> None:
-    """Create tables if they do not exist."""
+    """
+    Initialize database schema.
+    
+    Creates tables for cases, opinions, and chunks if they don't exist.
+    
+    Args:
+        conn: Active database connection.
+    """
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS cases (
@@ -51,7 +73,11 @@ def init_db(conn: sqlite3.Connection) -> None:
 
 
 def case_exists(conn: sqlite3.Connection, case_id: str) -> bool:
-    cur = conn.execute("SELECT 1 FROM cases WHERE case_id = ? LIMIT 1;", (case_id,))
+    """Check if a case already exists in the database."""
+    cur = conn.execute(
+        "SELECT 1 FROM cases WHERE case_id = ? LIMIT 1;", 
+        (case_id,)
+    )
     return cur.fetchone() is not None
 
 
@@ -64,9 +90,11 @@ def insert_case(
     jurisdiction: str,
     decision_date: str,
 ) -> None:
+    """Insert or update a case record."""
     conn.execute(
         """
-        INSERT OR REPLACE INTO cases (case_id, name, citation, court, jurisdiction, decision_date)
+        INSERT OR REPLACE INTO cases 
+            (case_id, name, citation, court, jurisdiction, decision_date)
         VALUES (?, ?, ?, ?, ?, ?);
         """,
         (case_id, name, citation, court, jurisdiction, decision_date),
@@ -78,6 +106,14 @@ def insert_opinions(
     case_id: str,
     opinions: Iterable[Tuple[str, str]],
 ) -> None:
+    """
+    Insert opinion records for a case.
+    
+    Args:
+        conn: Database connection.
+        case_id: Parent case identifier.
+        opinions: Iterable of (opinion_type, text) tuples.
+    """
     conn.executemany(
         """
         INSERT INTO opinions (case_id, opinion_type, text)
@@ -91,10 +127,17 @@ def insert_chunks(
     conn: sqlite3.Connection,
     rows: Iterable[Tuple[str, str, str, int, str, int]],
 ) -> None:
+    """
+    Insert chunk records.
+    
+    Args:
+        conn: Database connection.
+        rows: Iterable of (chunk_id, case_id, opinion_type, position, text, token_count).
+    """
     conn.executemany(
         """
         INSERT OR REPLACE INTO chunks
-        (chunk_id, case_id, opinion_type, position, text, token_count)
+            (chunk_id, case_id, opinion_type, position, text, token_count)
         VALUES (?, ?, ?, ?, ?, ?);
         """,
         rows,

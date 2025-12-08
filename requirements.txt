@@ -1,5 +1,14 @@
-streamlit
-transformers
-sentence-transformers
-faiss-cpu
-numpy
+# Web interface
+streamlit>=1.28.0
+
+# ML / Embeddings
+torch>=2.0.0
+transformers>=4.36.0
+sentence-transformers>=3.0.0
+
+# Vector search
+faiss-cpu>=1.7.4
+numpy>=1.24.0
+
+# HTTP requests
+requests>=2.31.0
