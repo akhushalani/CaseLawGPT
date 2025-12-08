@@ -281,6 +281,14 @@ def download_cases(
     else:
         print("Auto-confirm enabled; proceeding without prompt.")
 
+    skipped = {
+        "duplicate_or_missing_id": 0,
+        "short_text": 0,
+        "missing_cluster": 0,
+        "missing_docket": 0,
+        "other": 0,
+    }
+
     for opinion in iter_scotus_opinions(start_date, page_size=page_size, page_delay=page_delay):
         if saved >= target_total:
             break
@@ -289,6 +297,7 @@ def download_cases(
         case_id = f"cl-{opinion_id}"
         
         if case_id in seen_ids or not opinion_id:
+            skipped["duplicate_or_missing_id"] += 1
             continue
         
         # Get opinion text
@@ -296,20 +305,25 @@ def download_cases(
         text = strip_html(text)
         
         if len(text) < 500:
+            skipped["short_text"] += 1
             continue
         
         # Get cluster info
         cluster_url = opinion.get("cluster")
         if not cluster_url:
+            skipped["missing_cluster"] += 1
             continue
         
         cluster = get_cluster_details(cluster_url)
         if not cluster:
+            skipped["missing_cluster"] += 1
             continue
         
         # Get docket info
         docket_url = cluster.get("docket")
         docket = get_docket_details(docket_url) if docket_url else {}
+        if not docket:
+            skipped["missing_docket"] += 1
         
         # Extract citation
         citations = cluster.get("citations", [])
@@ -354,6 +368,7 @@ def download_cases(
             time.sleep(case_delay)  # Rate limiting
 
     print(f"\nDone! Downloaded {saved} cases to {output_dir}")
+    print("Skip summary:", skipped)
     return saved
 
 
