@@ -9,11 +9,13 @@ import sys
 # Prevent TensorFlow import hanging on Apple Silicon
 sys.modules["tensorflow"] = None  # noqa: E402
 
+import os
 from pathlib import Path
 from typing import List, Tuple, Optional, Sequence
 
 import faiss
 import numpy as np
+import torch
 from sentence_transformers import SentenceTransformer
 
 from src.config import (
@@ -33,12 +35,32 @@ _index: Optional[faiss.Index] = None
 _chunk_id_map: Optional[np.ndarray] = None
 
 
+def _resolve_device() -> str:
+    """Pick embedding device, favoring explicit env, then CUDA/MPS, else CPU."""
+    device_env = os.getenv("EMBEDDING_DEVICE")
+    if device_env:
+        return device_env
+    if torch.cuda.is_available():
+        return "cuda"
+    if torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
+
 def load_embedder() -> SentenceTransformer:
     """Load and cache the embedding model."""
     global _embedder
     
     if _embedder is None:
-        _embedder = SentenceTransformer(EMBEDDING_MODEL_NAME)
+        device = _resolve_device()
+        try:
+            _embedder = SentenceTransformer(EMBEDDING_MODEL_NAME, device=device)
+        except NotImplementedError:
+            # Some torch builds + meta tensors can fail; fall back to CPU.
+            _embedder = SentenceTransformer(EMBEDDING_MODEL_NAME, device="cpu")
+        except Exception:
+            # Last-resort fallback to CPU if anything unexpected happens.
+            _embedder = SentenceTransformer(EMBEDDING_MODEL_NAME, device="cpu")
     
     return _embedder
 

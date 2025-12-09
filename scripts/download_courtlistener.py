@@ -25,7 +25,7 @@ import requests
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.config import RAW_DATA_DIR, ensure_directories
+from src.config import RAW_DATA_DIR, MIN_OPINION_LENGTH, ensure_directories
 
 
 # =============================================================================
@@ -221,6 +221,7 @@ def download_cases(
     page_size: int = PAGE_SIZE,
     case_delay: float = DEFAULT_CASE_DELAY,
     page_delay: float = DEFAULT_PAGE_DELAY,
+    min_length: int = MIN_OPINION_LENGTH,
 ) -> int:
     """
     Download SCOTUS cases from CourtListener API.
@@ -233,6 +234,7 @@ def download_cases(
         page_size: API page size for opinions (max allowed by API is 100).
         case_delay: Sleep between cases (seconds).
         page_delay: Sleep between pages (seconds).
+        min_length: Minimum opinion text length to keep (characters).
         
     Returns:
         Number of cases successfully downloaded.
@@ -272,6 +274,7 @@ def download_cases(
     if n_cases is not None and n_cases < total_available:
         print(f"Limiting download to first {target_total} cases.")
     print(f"Found {len(seen_ids)} existing cases in {output_dir} (will skip duplicates).")
+    print(f"Minimum opinion length: {min_length} characters.")
 
     if not auto_confirm:
         proceed = input(f"Continue and download up to {target_total} cases? [y/N]: ").strip().lower()
@@ -304,7 +307,7 @@ def download_cases(
         text = opinion.get("html_with_citations") or opinion.get("plain_text") or ""
         text = strip_html(text)
         
-        if len(text) < 500:
+        if len(text) < min_length:
             skipped["short_text"] += 1
             continue
         
@@ -421,6 +424,12 @@ if __name__ == "__main__":
         default=DEFAULT_PAGE_DELAY,
         help="Delay between pages in seconds (set 0 for fastest)",
     )
+    parser.add_argument(
+        "--min-length",
+        type=int,
+        default=MIN_OPINION_LENGTH,
+        help="Minimum opinion length to keep (characters)",
+    )
     
     args = parser.parse_args()
     download_cases(
@@ -431,4 +440,5 @@ if __name__ == "__main__":
         page_size=args.page_size,
         case_delay=args.case_delay,
         page_delay=args.page_delay,
+        min_length=args.min_length,
     )
